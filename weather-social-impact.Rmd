@@ -1,0 +1,282 @@
+Public Health and Economic Impact of Weather events in the US
+=============================================================
+
+## Synopsis
+ **Here** 
+
+## Data Processing
+
+1. **Note 1:** Dependencies: no
+2. **Note 2:** The source documentation for this analysis is given in [NWSI][1]
+
+For out analysis, we are going to use the NOAA Storm Database. So first we need to download it to a temporal file, expand it and put it in a data frame called weather_dataset:
+
+```{r cache=TRUE}
+filename = "http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+tempfile <- tempfile()
+download.file(filename, tempfile)
+weather_dataset = read.csv(bzfile(tempfile), sep=",", header=T)
+unlink(tempfile)
+```
+
+With the following function lets check if there are any NA's in the dataset:
+
+
+```{r}
+nacols <- function(df) {
+    colnames(df)[unlist(lapply(df, function(x) any(is.na(x))))]
+}
+na_cols = nacols(weather_dataset)
+na_cols
+```
+
+As we can see there are 4 columns that contain NA values.
+So lets keep in mind this just in case we have to use them.
+
+We will also check the number of rows with NA's, to have an idea of the completeness of our dataset:
+
+
+```{r}
+ok = complete.cases(weather_dataset)
+na_rows = sum(!ok)
+na_rows
+```
+
+As we can see, there are a lot (902297) of missing values in this dataset.
+
+Lets get to know a bit out dataset. These are the fields:
+
+```{r}
+str(weather_dataset)
+```
+
+This are the field names:
+
+```{r}
+colnames(weather_dataset)
+```
+
+and this is a simple summary:
+
+```{r}
+summary(weather_dataset)
+```
+
+We have to provide a unique standard unit for the values of crop damage and property damage. I choose K (thousand's of $)
+
+```{r}
+# provide a unique standard unit for prop damage
+standarizePropDmgUnit = function(propDmg, propDmgExp) {  
+  if(propDmgExp=="b") {#billion
+    propDmg * 1000 * 1000
+    
+  } else if(propDmgExp=="M") {#million
+    propDmg * 1000
+  } else if(propDmgExp=="m") {#Thousandth
+    propDmg / (1000^6)
+  } else if(propDmgExp=="H") {#hundred
+    propDmg / 1000
+  } else {# fr K and all other values, return as is
+    #Note: its very obscure the symbol h and the numbers,
+    # -, + and ?
+    # I just keep it as is
+    propDmg
+  }
+}
+
+# provides a unique standard unit for
+# crop damage values
+standarizeCropDmgUnit = function(cropDmg, cropDmgExp) {  
+  if(cropDmgExp=="b") {#billion
+    cropDmg * 1000 * 1000
+  } else if(cropDmgExp=="M") {#million
+    cropDmg * 1000
+  } else if(cropDmgExp=="m") {#Thousandth
+    cropDmg / (1000^6)
+  } else if(cropDmgExp=="H") {#hundred
+    cropDmg / 1000 
+  } else {# fr K and all other values, return as is
+    #Note: its very obscure the symbol h and the numbers,
+    # -, + and ?
+    # I just keep it as is
+    cropDmg
+  }
+}
+
+#remove entries with 0 fatalities (harmless)
+weather_dataset = weather_dataset[weather_dataset$FATALITIES != 0,]
+
+#remove entries with no injuries (harmless)
+weather_dataset = weather_dataset[weather_dataset$INJURIES != 0,]
+
+#remove entries with no prop damage expenditures
+weather_dataset = weather_dataset[weather_dataset$PROPDMG != 0,]
+
+#remove entries with no crop damage expenditures
+weather_dataset = weather_dataset[weather_dataset$CROPDMG != 0,]
+
+for(i in 1:nrow(weather_dataset)) {
+    propDmg = weather_dataset[i,"PROPDMG"]
+    propDmgExp = weather_dataset[i,"PROPDMGEXP"]
+    cropDmg = weather_dataset[i,"CROPDMG"]
+    cropDmgExp = weather_dataset[i,"CROPDMGEXP"]
+    
+    weather_dataset[i,"PROPDMG"] = standarizePropDmgUnit(
+      propDmg, propDmgExp)
+    weather_dataset[i,"CROPDMG"] = standarizeCropDmgUnit(
+      cropDmg, cropDmgExp)
+    # do stuff with row
+}
+
+
+# IMPORTANT: please not I didn't "clean" the fields in the sense
+# that I didn't merge fields together like others did.
+# I tihink that for doing that, one should have more info
+# on why those fields that look the same should be merged
+# with confidence. else one may be twisting results
+
+```
+
+
+
+## Results 
+
+We want to answer the following 2 fundamental questions:
+
+1. Across the United States, which types of events are most harmful with respect to population health?
+
+2. Across the United States, which types of events have the greatest economic consequences?
+
+### Most harmful events for population health
+
+The field for the event types is EVTYPE. 
+Lets take a look at some event types:
+
+```{r}
+str(weather_dataset$EVTYPE)
+```
+
+In section 7 of the NWSI reference document ([NWSI][1]) we can inspect the different types of events in detail.
+For example From that document we can see that Excessive Heat (Z) event type is used for reporting fatalities (directly-related) or major impacts to human health occurring during excessive heat;
+Here is the quote:
+**Excessive Heat (Z)**
+**Fatalities (directly-related) or major impacts to human health occurring during excessive heat warning conditions are reported using this event category.**
+
+coming back to our question, We need a meassure of the impact of each of these event types to public health. From the doc and the dataset, that impact should be given by two fields: FATALITIES (death cases) and INJURIES.
+
+We should treat these 2 in a separate way as they are not the same. But we can "join" them together to see the overall "health impact" as this is what we want to answer
+
+Total deaths per event type (first 10 greatest by # of deaths):
+```{r}
+deathsPerEvtyp = aggregate(weather_dataset['FATALITIES'],
+  by=list(event = weather_dataset$EVTYPE), FUN=sum)
+# order the results
+deathsPerEvtyp = deathsPerEvtyp[with(deathsPerEvtyp, order(-FATALITIES)), ]
+
+top10Fatalities = head(deathsPerEvtyp, n=10)
+top10Fatalities
+```
+
+Those are the top-10 most deathful events. As we can see, tornados and excessive heat are the most fatal events by far, with 5633 and 1903 number of deaths respectively.
+
+Total injuries per event type (first 10 greatest by # of injuries):
+```{r}
+injPerEvtyp = aggregate(weather_dataset['INJURIES'], 
+  by=list(event = weather_dataset$EVTYPE), FUN=sum)
+# order the results
+injPerEvtyp = injPerEvtyp[with(injPerEvtyp, order(-INJURIES)), ]
+
+top10Injuries = head(injPerEvtyp, n=10)
+top10Injuries
+```
+
+Those are the top-10 most harmful (only injuries) events, with tornados been the most harmful (91346 injurie cases) events by far.
+
+The following is a graph (bar plot) of the top-10 most harmful events in each case (death and injuries):
+
+```{r}
+par(mfrow = c(2, 1))
+# deaths plot
+barplot(top10Fatalities$FATALITIES,main="Top-10 Deaths per event type", xlab="Event type", ylab="# deaths",col=c("red", "brown","brown1","brown2", "brown3","burlywood","burlywood1","burlywood2", "burlywood3","burlywood4"), names.arg=1:10, legend=top10Fatalities[,"event"], args.legend=c(cex=0.5))
+#args.legend=c(cex=0.4))
+# and this is the injuries plot
+barplot(top10Injuries$INJURIES,main="Top-10 Injuries count per event type", 
+    xlab="Event type", ylab="# injuries",col=c("red", "brown","brown1","brown2", "brown3","burlywood","burlywood1","burlywood2", "burlywood3","burlywood4"), names.arg=1:10, legend=top10Injuries[,"event"], args.legend=c(cex=0.5))
+```
+
+And lets see the overall harm (deaths + injuries)
+```{r}
+# first lets merge the 2 datasets
+harmPerEvtyp = merge(top10Fatalities,top10Injuries)
+harmPerEvtyp$HARM = harmPerEvtyp$FATALITIES + harmPerEvtyp$INJURIES 
+# order the results
+harmPerEvtyp = harmPerEvtyp[with(harmPerEvtyp, order(-HARM)), ]
+
+barplot(harmPerEvtyp$HARM,main="Top-10 harmful events", 
+    xlab="Event type",ylab="harm count", col=c("red", "brown","brown1","brown2", "brown3","burlywood","burlywood1"), legend=harmPerEvtyp[,"event"],
+    args.legend=c(cex=0.8))
+
+```
+
+As we can see, overall, the 10-most harmful event is the tornado, following is excessive heat, wind, flood, lightening, heat and flash flood. 
+
+**We should take very special care regarding tornados!!!**
+
+### Events with greatest economic consequences
+
+Now lets see what happens with the economic  aspect.
+The question is:
+**Across the United States, which types of events have the greatest economic consequences?**
+Let's see for each economic factor in each own:
+
+The fields we are interested in are:
+
+1."PROPDMG" (property damage)  
+2."CROPDMG" (crop damage)
+
+with corresponding units:
+"PROPDMGEXP" (unit for property damage)
+"CROPDMGEXP" (unit for crop damage)
+
+So this is the property damage per event type:
+```{r}
+propDmgPerEvtyp = aggregate(weather_dataset['PROPDMG'],
+  by=list(event = weather_dataset$EVTYPE), FUN=sum)
+
+# order the results
+propDmgPerEvtyp = propDmgPerEvtyp[with(propDmgPerEvtyp, order(-PROPDMG)), ]
+top10propDmg = head(propDmgPerEvtyp, n=10)
+top10propDmg
+```
+
+As we can see, the tornado and flash wind are the events whith the greatest damage
+
+Lets see what about the crop damage
+```{r}
+cropDmgPerEvtyp = aggregate(weather_dataset['CROPDMG'],
+  by=list(event = weather_dataset$EVTYPE), FUN=sum)
+
+# order the results
+cropDmgPerEvtyp = cropDmgPerEvtyp[with(cropDmgPerEvtyp, order(-CROPDMG)), ]
+
+top10cropDmg = head(cropDmgPerEvtyp, n=10)
+top10cropDmg
+```
+
+And we can see that Hail is the event with the greatest damage, following is flsh flood, wind, tornado, etc.
+
+Let see a plot of all this:
+
+```{r}
+par(mfrow = c(2, 1))
+# prop plot
+barplot(top10propDmg$PROPDMG,main="Top-10 prop damage per event type", 
+    xlab="Event type", ylab="prop damage",col=c("red", "brown","brown1","brown2", "brown3","burlywood","burlywood1","burlywood2", "burlywood3","burlywood4"), names.arg=1:10, legend=top10propDmg[,"event"],args.legend=c(cex=0.5))
+# and this is the crop plot
+barplot(top10cropDmg$CROPDMG,main="Top-10 Crop damage per event type", 
+    xlab="Event type", ylab="crop damage",col=c("red", "brown","brown1","brown2", "brown3","burlywood","burlywood1","burlywood2", "burlywood3","burlywood4"), names.arg=1:10, legend=top10cropDmg[,"event"],args.legend=c(cex=0.5))
+```
+
+
+[1]: https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf        "NWSI"
+[2]: https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2   "Dataset"
